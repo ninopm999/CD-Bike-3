@@ -1,8 +1,8 @@
-streamlit
-pandas
-numpy
-matplotlib
-seaborn
-scikit-learn
-scipy
-pycaret
+    streamlit
+    pycaret
+    pandas
+    numpy
+    scikit-learn
+    scipy
+    matplotlib # Although not directly used in app.py, it might be a dependency for other libs
+    seaborn # Same as matplotlib
