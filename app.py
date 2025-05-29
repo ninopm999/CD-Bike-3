@@ -1,3 +1,4 @@
+%%writefile app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,18 +10,37 @@ from scipy.stats.mstats import winsorize # Keep this for the custom function
 # --- Define Custom Function Used in Pipeline ---
 # This function MUST be defined in app.py so the loaded model can find it
 def winsorize_series_robust(df_or_series, limits=(0.01, 0.01)):
-    if isinstance(df_or_series, pd.DataFrame):
-        series_to_winsorize = df_or_series.iloc[:, 0].copy()
-    else:
+    # Ensure input is treated as a DataFrame for consistent 2D output logic
+    if isinstance(df_or_series, pd.Series):
         series_to_winsorize = df_or_series.copy()
+        # Convert Series to DataFrame with one column for consistent 2D output
+        input_df = series_to_winsorize.to_frame()
+    elif isinstance(df_or_series, pd.DataFrame):
+        # If it's already a DataFrame, ensure it has only one column if that's what's expected by winsorize
+        if df_or_series.shape[1] > 1:
+            # If the original transformer passed multiple columns, this logic needs adjustment
+            # However, for a single 'hum_winsorize', it implies one column is passed.
+            series_to_winsorize = df_or_series.iloc[:, 0].copy()
+            input_df = series_to_winsorize.to_frame()
+        else:
+            series_to_winsorize = df_or_series.iloc[:, 0].copy()
+            input_df = df_or_series.copy() # Already 1-column DataFrame
+    else:
+        # Handle numpy arrays if they could be passed (convert to Series first)
+        series_to_winsorize = pd.Series(df_or_series.flatten()) # Ensure 1D then convert to Series
+        input_df = series_to_winsorize.to_frame()
+
 
     # Handle cases where the series might be empty or have non-numeric data before winsorize
     if series_to_winsorize.empty or not pd.api.types.is_numeric_dtype(series_to_winsorize):
-            # Return the original series or handle appropriately if non-numeric
-            return series_to_winsorize
+            # Return an empty DataFrame with appropriate column if empty, or original if non-numeric
+            if series_to_winsorize.empty:
+                return pd.DataFrame(columns=[series_to_winsorize.name]) # Return empty DataFrame with column name
+            return input_df # Return original input_df if non-numeric but not empty
 
     winsorized_array = winsorize(series_to_winsorize, limits=limits)
-    return pd.Series(winsorized_array.flatten(), name=series_to_winsorize.name) # Return as Series
+    # Crucial change: Return as a DataFrame with a single column
+    return pd.DataFrame(winsorized_array.flatten(), columns=[series_to_winsorize.name])
 
 
 # --- Streamlit Page Configuration ---
@@ -140,20 +160,11 @@ if final_pipeline is not None: # Proceed only if the pipeline is loaded successf
     input_df_raw['weekday_sin'] = np.sin(2 * np.pi * input_df_raw['datetime'].dt.weekday / 7.0)
     input_df_raw['weekday_cos'] = np.cos(2 * np.pi * input_df_raw['datetime'].dt.weekday / 7.0)
 
-    # NEW: Features from the latest KeyError
+    # Features from the latest KeyError
     input_df_raw['hour_val'] = input_df_raw['datetime'].dt.hour
     input_df_raw['month_val'] = input_df_raw['datetime'].dt.month
     input_df_raw['weekday_val'] = input_df_raw['datetime'].dt.weekday # Monday=0, Sunday=6
-
-    # For 'year_cat', this typically comes from the year of the datetime.
-    # If your original dataset only spanned a few years, PyCaret might have
-    # treated year as a categorical feature.
     input_df_raw['year_cat'] = input_df_raw['datetime'].dt.year.astype(str) # Convert to string for categorical treatment
-    # If your model was trained on only 2011 and 2012 data, and you input 2025,
-    # 'year_cat' might be an unknown category. PyCaret usually handles this gracefully
-    # during prediction by assigning a default value (e.g., NaN, then imputed)
-    # or by raising a warning/error if the category is completely new and not seen during training.
-    # For now, converting to string is the direct fix for the KeyError.
     # --- END FEATURE ENGINEERING ---
 
 
@@ -164,8 +175,6 @@ if final_pipeline is not None: # Proceed only if the pipeline is loaded successf
         st.subheader("Prediction Result")
         try:
             # --- Direct Prediction Using the Loaded Pipeline ---
-            # Since final_pipeline IS the PyCaret Pipeline object,
-            # its .predict() method handles preprocessing internally.
             raw_prediction = final_pipeline.predict(input_df_raw)
 
             predicted_count = raw_prediction[0] # Get the single prediction value
